@@ -288,7 +288,7 @@ def handle_logout():
     </div>
     """
 
-# CSS personalizado - NUEVOS COLORES
+# CSS personalizado
 custom_css = """
 .gradio-container {
     font-family: 'Segoe UI', system-ui, sans-serif;
@@ -363,12 +363,11 @@ with gr.Blocks(css=custom_css, title="Hakari - Personalidad Dinámica") as app:
                     """)
                 
                 with gr.Column(scale=2):
+                    # CHATBOT CORREGIDO - sin parámetros de colores
                     chatbot = gr.Chatbot(
                         label=f"Hakari - {hakari.calcular_edad()} años",
                         height=500,
-                        show_copy_button=True,
-                        bubble_user_bg_color="#ec4899",
-                        bubble_ai_bg_color="#4b5563"
+                        show_copy_button=True
                     )
                     with gr.Row():
                         msg = gr.Textbox(
