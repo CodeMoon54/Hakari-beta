@@ -9,7 +9,6 @@ import sqlite3
 import json
 import requests
 from datetime import datetime, date, timedelta
-from dateutil.relativedelta import relativedelta
 import pickle
 from typing import Dict, List, Optional
 
@@ -17,7 +16,7 @@ from typing import Dict, List, Optional
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 client = genai.Client(api_key=GEMINI_API_KEY)
 
-# ==================== BASE DE DATOS MEJORADA ====================
+# ==================== BASE DE DATOS SIMPLIFICADA ====================
 class DatabaseManager:
     def __init__(self):
         self.conn = sqlite3.connect('hakari_memory.db', check_same_thread=False)
@@ -26,7 +25,7 @@ class DatabaseManager:
     def create_tables(self):
         cursor = self.conn.cursor()
         
-        # Tabla de usuarios (ya existe)
+        # Tabla de usuarios
         cursor.execute('''
             CREATE TABLE IF NOT EXISTS usuarios (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -35,13 +34,11 @@ class DatabaseManager:
                 fecha_registro DATETIME,
                 nivel_confianza INTEGER DEFAULT 30,
                 interacciones_totales INTEGER DEFAULT 0,
-                temas_favoritos TEXT,
-                ultima_visita DATETIME,
-                password_hash TEXT
+                ultima_visita DATETIME
             )
         ''')
         
-        # Tabla de conversaciones por usuario (NUEVA)
+        # Tabla de conversaciones
         cursor.execute('''
             CREATE TABLE IF NOT EXISTS conversaciones (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -49,25 +46,11 @@ class DatabaseManager:
                 mensaje_usuario TEXT,
                 mensaje_hakari TEXT,
                 estado_emocional TEXT,
-                fecha DATETIME,
-                FOREIGN KEY (usuario_email) REFERENCES usuarios (email)
+                fecha DATETIME
             )
         ''')
         
-        # Resto de tablas (ya existen)
-        cursor.execute('''
-            CREATE TABLE IF NOT EXISTS memoria_largo_plazo (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                usuario_email TEXT,
-                tipo_memoria TEXT,
-                contenido TEXT,
-                importancia INTEGER DEFAULT 1,
-                fecha_creacion DATETIME,
-                fecha_actualizacion DATETIME,
-                FOREIGN KEY (usuario_email) REFERENCES usuarios (email)
-            )
-        ''')
-        
+        # Tabla de logros
         cursor.execute('''
             CREATE TABLE IF NOT EXISTS logros (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -75,118 +58,142 @@ class DatabaseManager:
                 logro_id TEXT,
                 nombre TEXT,
                 descripcion TEXT,
-                fecha_desbloqueo DATETIME,
-                FOREIGN KEY (usuario_email) REFERENCES usuarios (email)
-            )
-        ''')
-        
-        cursor.execute('''
-            CREATE TABLE IF NOT EXISTS diario_hakari (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                fecha DATETIME,
-                entrada TEXT,
-                estado_emocional TEXT,
-                privacidad TEXT DEFAULT 'privado'
+                fecha_desbloqueo DATETIME
             )
         ''')
         
         self.conn.commit()
     
-    # ==================== MÉTODOS PARA CONVERSACIONES ====================
     def guardar_conversacion(self, usuario_email: str, mensaje_usuario: str, mensaje_hakari: str, estado_emocional: str):
-        cursor = self.conn.cursor()
-        cursor.execute('''
-            INSERT INTO conversaciones (usuario_email, mensaje_usuario, mensaje_hakari, estado_emocional, fecha)
-            VALUES (?, ?, ?, ?, datetime('now'))
-        ''', (usuario_email, mensaje_usuario, mensaje_hakari, estado_emocional))
-        self.conn.commit()
-    
-    def obtener_historial_conversacion(self, usuario_email: str, limite: int = 50) -> List[Dict]:
-        cursor = self.conn.cursor()
-        cursor.execute('''
-            SELECT mensaje_usuario, mensaje_hakari, estado_emocional, fecha
-            FROM conversaciones 
-            WHERE usuario_email = ?
-            ORDER BY fecha ASC
-            LIMIT ?
-        ''', (usuario_email, limite))
-        
-        historial = []
-        for row in cursor.fetchall():
-            historial.append({
-                'usuario': row[0],
-                'hakari': row[1],
-                'estado': row[2],
-                'fecha': row[3]
-            })
-        return historial
+        try:
+            cursor = self.conn.cursor()
+            cursor.execute('''
+                INSERT INTO conversaciones (usuario_email, mensaje_usuario, mensaje_hakari, estado_emocional, fecha)
+                VALUES (?, ?, ?, ?, datetime('now'))
+            ''', (usuario_email, mensaje_usuario, mensaje_hakari, estado_emocional))
+            self.conn.commit()
+            return True
+        except Exception as e:
+            print(f"Error guardando conversación: {e}")
+            return False
     
     def obtener_ultimas_conversaciones(self, usuario_email: str, limite: int = 10) -> List[List[str]]:
-        """Obtiene el historial en formato para Gradio Chatbot"""
-        cursor = self.conn.cursor()
-        cursor.execute('''
-            SELECT mensaje_usuario, mensaje_hakari
-            FROM conversaciones 
-            WHERE usuario_email = ?
-            ORDER BY fecha DESC
-            LIMIT ?
-        ''', (usuario_email, limite))
-        
-        historial = []
-        for row in cursor.fetchall():
-            historial.append([row[0], row[1]])
-        
-        # Invertir para mostrar en orden cronológico
-        return historial[::-1]
+        try:
+            cursor = self.conn.cursor()
+            cursor.execute('''
+                SELECT mensaje_usuario, mensaje_hakari
+                FROM conversaciones 
+                WHERE usuario_email = ?
+                ORDER BY fecha DESC
+                LIMIT ?
+            ''', (usuario_email, limite))
+            
+            historial = []
+            for row in cursor.fetchall():
+                historial.append([row[0], row[1]])
+            
+            return historial[::-1]  # Invertir para orden cronológico
+        except Exception as e:
+            print(f"Error obteniendo conversaciones: {e}")
+            return []
     
-    # ==================== MÉTODOS PARA USUARIOS ====================
     def verificar_usuario_existe(self, email: str) -> bool:
-        cursor = self.conn.cursor()
-        cursor.execute('SELECT id FROM usuarios WHERE email = ?', (email,))
-        return cursor.fetchone() is not None
+        try:
+            cursor = self.conn.cursor()
+            cursor.execute('SELECT id FROM usuarios WHERE email = ?', (email,))
+            return cursor.fetchone() is not None
+        except Exception as e:
+            print(f"Error verificando usuario: {e}")
+            return False
     
     def obtener_datos_usuario(self, email: str) -> Optional[Dict]:
-        cursor = self.conn.cursor()
-        cursor.execute('''
-            SELECT nombre, nivel_confianza, interacciones_totales, fecha_registro
-            FROM usuarios WHERE email = ?
-        ''', (email,))
-        
-        result = cursor.fetchone()
-        if result:
-            return {
-                'nombre': result[0],
-                'confianza': result[1],
-                'interacciones_totales': result[2],
-                'fecha_registro': result[3]
-            }
-        return None
+        try:
+            cursor = self.conn.cursor()
+            cursor.execute('''
+                SELECT nombre, nivel_confianza, interacciones_totales, fecha_registro
+                FROM usuarios WHERE email = ?
+            ''', (email,))
+            
+            result = cursor.fetchone()
+            if result:
+                return {
+                    'nombre': result[0],
+                    'confianza': result[1],
+                    'interacciones_totales': result[2],
+                    'fecha_registro': result[3]
+                }
+            return None
+        except Exception as e:
+            print(f"Error obteniendo datos usuario: {e}")
+            return None
+    
+    def registrar_usuario(self, email: str, nombre: str) -> bool:
+        try:
+            cursor = self.conn.cursor()
+            cursor.execute('''
+                INSERT INTO usuarios (email, nombre, fecha_registro, ultima_visita)
+                VALUES (?, ?, datetime('now'), datetime('now'))
+            ''', (email, nombre))
+            self.conn.commit()
+            return True
+        except Exception as e:
+            print(f"Error registrando usuario: {e}")
+            return False
+    
+    def actualizar_estadisticas(self, email: str):
+        try:
+            cursor = self.conn.cursor()
+            cursor.execute('''
+                UPDATE usuarios 
+                SET interacciones_totales = interacciones_totales + 1,
+                    nivel_confianza = MIN(100, nivel_confianza + 1),
+                    ultima_visita = datetime('now')
+                WHERE email = ?
+            ''', (email,))
+            self.conn.commit()
+            return True
+        except Exception as e:
+            print(f"Error actualizando estadísticas: {e}")
+            return False
+    
+    def registrar_logro(self, usuario_email: str, logro_id: str, nombre: str, descripcion: str) -> bool:
+        try:
+            cursor = self.conn.cursor()
+            # Verificar si ya existe
+            cursor.execute('SELECT id FROM logros WHERE usuario_email = ? AND logro_id = ?', (usuario_email, logro_id))
+            if not cursor.fetchone():
+                cursor.execute('''
+                    INSERT INTO logros (usuario_email, logro_id, nombre, descripcion, fecha_desbloqueo)
+                    VALUES (?, ?, ?, ?, datetime('now'))
+                ''', (usuario_email, logro_id, nombre, descripcion))
+                self.conn.commit()
+                return True
+            return False
+        except Exception as e:
+            print(f"Error registrando logro: {e}")
+            return False
+    
+    def obtener_logros_usuario(self, usuario_email: str) -> List[str]:
+        try:
+            cursor = self.conn.cursor()
+            cursor.execute('SELECT nombre FROM logros WHERE usuario_email = ? LIMIT 5', (usuario_email,))
+            return [row[0] for row in cursor.fetchall()]
+        except Exception as e:
+            print(f"Error obteniendo logros: {e}")
+            return []
 
 db = DatabaseManager()
 
-# ==================== SISTEMA DE AUTENTICACIÓN ====================
+# ==================== SISTEMA DE AUTENTICACIÓN SIMPLIFICADO ====================
 class SistemaAutenticacion:
     def __init__(self):
         self.sesiones_activas = {}
-    
-    def generar_hash_simple(self, email: str) -> str:
-        """Genera un hash simple para demostración (en producción usar bcrypt)"""
-        import hashlib
-        return hashlib.sha256(f"hakari_{email}".encode()).hexdigest()[:12]
     
     def registrar_usuario(self, email: str, nombre: str) -> tuple[bool, str]:
         if db.verificar_usuario_existe(email):
             return False, "❌ Este email ya está registrado"
         
-        cursor = db.conn.cursor()
-        try:
-            cursor.execute('''
-                INSERT INTO usuarios (email, nombre, fecha_registro, ultima_visita, password_hash)
-                VALUES (?, ?, datetime('now'), datetime('now'), ?)
-            ''', (email, nombre, self.generar_hash_simple(email)))
-            db.conn.commit()
-            
-            # Crear sesión automáticamente después del registro
+        if db.registrar_usuario(email, nombre):
             sesion_id = secrets.token_urlsafe(16)
             self.sesiones_activas[sesion_id] = {
                 'email': email,
@@ -195,32 +202,20 @@ class SistemaAutenticacion:
             }
             
             # Primer logro
-            db.registrar_logro(email, 'primer_conversacion', 
-                              '🌟 Primer Contacto', 
-                              'Iniciaste tu primera conversación con Hakari')
+            db.registrar_logro(email, 'primer_conversacion', '🌟 Primer Contacto', 'Iniciaste tu primera conversación con Hakari')
             
             return True, sesion_id
-            
-        except Exception as e:
-            return False, f"❌ Error al registrar: {str(e)}"
+        
+        return False, "❌ Error al registrar usuario"
     
     def iniciar_sesion(self, email: str) -> tuple[bool, str]:
         if not db.verificar_usuario_existe(email):
             return False, "❌ Este email no está registrado"
         
-        # En una app real, aquí verificarías la contraseña
-        # Por ahora, solo verificamos que el usuario exista
-        
         datos_usuario = db.obtener_datos_usuario(email)
         if not datos_usuario:
             return False, "❌ Error al cargar datos del usuario"
         
-        # Actualizar última visita
-        cursor = db.conn.cursor()
-        cursor.execute('UPDATE usuarios SET ultima_visita = datetime("now") WHERE email = ?', (email,))
-        db.conn.commit()
-        
-        # Crear sesión
         sesion_id = secrets.token_urlsafe(16)
         self.sesiones_activas[sesion_id] = {
             'email': email,
@@ -242,177 +237,49 @@ class SistemaAutenticacion:
 
 sistema_auth = SistemaAutenticacion()
 
-# ==================== SISTEMA DE MEMORIA AVANZADO (actualizado) ====================
-class MemoriaAvanzada:
+# ==================== PERSONALIDAD HAKARI SIMPLIFICADA ====================
+class PersonalidadHakari:
     def __init__(self):
-        self.memoria_afectiva = {}
-        self.eventos_especiales = self.cargar_eventos_especiales()
-    
-    def cargar_eventos_especiales(self):
-        return {
-            'cumpleanos_hakari': date(2007, 5, 1),
-            'eventos_temporales': {
-                'navidad': {'mes': 12, 'dia': 25},
-                'halloween': {'mes': 10, 'dia': 31},
-                'invierno': {'mes': 12, 'dia': 21}
-            }
-        }
-    
-    def es_evento_especial(self):
-        hoy = date.today()
-        
-        if hoy.month == 5 and hoy.day == 1:
-            return "cumpleanos", f"Hoy cumplo {hoy.year - 2007} años..."
-        
-        for evento, fecha in self.eventos_especiales['eventos_temporales'].items():
-            if hoy.month == fecha['mes'] and hoy.day == fecha['dia']:
-                return evento, f"Hoy es {evento}, me siento diferente..."
-        
-        return None, None
-    
-    def registrar_interaccion_avanzada(self, usuario_email: str, mensaje: str, emocion: str, contexto: str):
-        if usuario_email not in self.memoria_afectiva:
-            self.memoria_afectiva[usuario_email] = {
-                'interacciones': [],
-                'emociones_registradas': {},
-                'confianza': 30,
-                'preferencias': {},
-                'ultimos_temas': []
-            }
-        
-        if len(mensaje) > 20 or any(palabra in mensaje.lower() for palabra in ['importante', 'recuerda', 'nunca olvidar']):
-            db.guardar_memoria_largo_plazo(usuario_email, 'conversacion_importante', mensaje, 3)
-        
-        self.actualizar_preferencias(usuario_email, mensaje, contexto)
-    
-    def actualizar_preferencias(self, usuario_email: str, mensaje: str, contexto: str):
-        temas_interes = {
-            'anime': ['evangelion', 'monogatari', 'anime', 'manga'],
-            'musica': ['radiohead', 'mitski', 'música', 'canción'],
-            'libros': ['murakami', 'leer', 'libro', 'novela'],
-            'arte': ['dibujar', 'escribir', 'poesía', 'arte']
-        }
-        
-        mensaje_lower = mensaje.lower()
-        for tema, palabras in temas_interes.items():
-            if any(palabra in mensaje_lower for palabra in palabras):
-                if usuario_email not in self.memoria_afectiva:
-                    self.memoria_afectiva[usuario_email] = {'preferencias': {}}
-                
-                if tema not in self.memoria_afectiva[usuario_email]['preferencias']:
-                    self.memoria_afectiva[usuario_email]['preferencias'][tema] = 0
-                self.memoria_afectiva[usuario_email]['preferencias'][tema] += 1
-
-memoria_avanzada = MemoriaAvanzada()
-
-# ==================== PERSONALIDAD EVOLUTIVA (actualizada) ====================
-class PersonalidadEvolutiva:
-    def __init__(self):
-        self.historia = {
-            'nombre': 'Hakari',
-            'edad': self.calcular_edad(),
-            'cumpleanos': date(2007, 5, 1),
-            'nivel_desarrollo': 1,
-            'experiencia_total': 0,
-            'sueños': [
-                "Escribir una novela que nadie entienda pero todos sientan",
-                "Aprender a tocar el theremin",
-                "Viajar a Islandia sola",
-                "Crear un diario que sobreviva al tiempo"
-            ],
-            'traumas_superados': [],
-            'habilidades_desarrolladas': []
-        }
-        
-        self.estados_avanzados = {
-            "reflexiva_profunda": {"emoji": "🌌", "color": "#7e22ce", "desc": "Filosofando sobre la existencia", "requiere_nivel": 2},
-            "creativa_flow": {"emoji": "🎨", "color": "#db2777", "desc": "Inmersa en creación artística", "requiere_nivel": 3},
-            "nostalgica_intensa": {"emoji": "📜", "color": "#4338ca", "desc": "Reviviendo memorias profundas", "requiere_nivel": 2},
-            "empatia_avanzada": {"emoji": "💞", "color": "#ec4899", "desc": "Conectando emocionalmente a nivel profundo", "requiere_nivel": 4}
-        }
-        
-        self.estados_comunes = {
+        self.estado_actual = "tímida"
+        self.estados = {
             "tímida": {"emoji": "🌙", "color": "#6366f1", "desc": "No está segura de hablar"},
             "irónica": {"emoji": "😏", "color": "#f59e0b", "desc": "Humor negro activado"},
             "nostálgica": {"emoji": "📚", "color": "#3b82f6", "desc": "Recordando cosas"},
             "defensiva": {"emoji": "🛡️", "color": "#ef4444", "desc": "Protegiendo su espacio"},
             "curiosa": {"emoji": "🔍", "color": "#10b981", "desc": "Interesada a pesar de todo"}
         }
-        
-        self.estado_actual = "tímida"
-        self.contador_interacciones = 0
-        self.energia_creativa = 100
-        self.confianza_global = 30
-        
+        self.contador = 0
+    
     def calcular_edad(self):
         hoy = date.today()
-        return hoy.year - 2007 - ((hoy.month, hoy.day) < (5, 1))
+        cumple = date(2007, 5, 1)
+        return hoy.year - cumple.year - ((hoy.month, hoy.day) < (cumple.month, cumple.day))
     
-    def evolucionar_personalidad(self, experiencia: int):
-        self.historia['experiencia_total'] += experiencia
-        nuevo_nivel = min(5, (self.historia['experiencia_total'] // 50) + 1)
-        if nuevo_nivel > self.historia['nivel_desarrollo']:
-            self.historia['nivel_desarrollo'] = nuevo_nivel
-            self.desbloquear_habilidad(nuevo_nivel)
-            return True
-        return False
-    
-    def desbloquear_habilidad(self, nivel: int):
-        habilidades = {
-            2: "Mayor profundidad emocional",
-            3: "Capacidad creativa mejorada", 
-            4: "Empatía avanzada",
-            5: "Sabiduría emocional"
-        }
-        if nivel in habilidades:
-            self.historia['habilidades_desarrolladas'].append(habilidades[nivel])
-    
-    def obtener_estados_disponibles(self):
-        estados = self.estados_comunes.copy()
-        nivel_actual = self.historia['nivel_desarrollo']
+    def actualizar_estado(self, mensaje: str):
+        self.contador += 1
+        mensaje = mensaje.lower()
         
-        for nombre, estado in self.estados_avanzados.items():
-            if estado['requiere_nivel'] <= nivel_actual:
-                estados[nombre] = estado
-        
-        return estados
-    
-    def actualizar_estado_evolutivo(self, mensaje: str, contexto: Dict):
-        self.contador_interacciones += 1
-        
-        experiencia_ganada = random.randint(1, 3)
-        if self.evolucionar_personalidad(experiencia_ganada):
-            return "evolucion", f"✨ He crecido un poco... ahora soy nivel {self.historia['nivel_desarrollo']}"
-        
-        estados_disponibles = self.obtener_estados_disponibles()
-        mensaje_lower = mensaje.lower()
-        
-        if any(palabra in mensaje_lower for palabra in ['filosofía', 'existencia', 'vida', 'muerte']):
-            if 'reflexiva_profunda' in estados_disponibles:
-                self.estado_actual = "reflexiva_profunda"
-        elif any(palabra in mensaje_lower for palabra in ['arte', 'crear', 'escribir', 'pintar']):
-            if 'creativa_flow' in estados_disponibles:
-                self.estado_actual = "creativa_flow"
-        elif any(palabra in mensaje_lower for palabra in ['recuerdo', 'pasado', 'nostalgia']):
-            if 'nostalgica_intensa' in estados_disponibles:
-                self.estado_actual = "nostalgica_intensa"
+        if any(palabra in mensaje for palabra in ['por qué', 'explica', 'razón']):
+            self.estado_actual = "defensiva"
+        elif any(palabra in mensaje for palabra in ['recuerd', 'antes', 'cuando']):
+            self.estado_actual = "nostálgica"
+        elif any(palabra in mensaje for palabra in ['interesante', 'cuéntame', 'sabes']):
+            self.estado_actual = "curiosa"
         elif random.random() < 0.3:
-            self.estado_actual = random.choice(list(estados_disponibles.keys()))
+            self.estado_actual = random.choice(list(self.estados.keys()))
         
-        return "normal", ""
+        return self.estado_actual
 
-hakari_evolutiva = PersonalidadEvolutiva()
+hakari = PersonalidadHakari()
 
-# ==================== SISTEMA DE LOGROS (igual) ====================
+# ==================== SISTEMA DE LOGROS ====================
 class SistemaLogros:
     def __init__(self):
         self.logros_disponibles = {
             'primer_conversacion': {'nombre': '🌟 Primer Contacto', 'descripcion': 'Iniciaste tu primera conversación con Hakari'},
             'confianza_50': {'nombre': '💝 Confianza Básica', 'descripcion': 'Alcanzaste 50% de confianza con Hakari'},
-            'confianza_80': {'nombre': '🔐 Amistad Sólida', 'descripcion': 'Alcanzaste 80% de confianza con Hakari'},
             '10_interacciones': {'nombre': '🎯 Conversador Persistente', 'descripcion': 'Completaste 10 interacciones con Hakari'},
-            'descubrir_anime': {'nombre': '📺 Otaku en Desarrollo', 'descripcion': 'Hablaste sobre anime con Hakari'},
-            'descubrir_musica': {'nombre': '🎵 Sintonía Emocional', 'descripcion': 'Compartiste gustos musicales con Hakari'}
+            'descubrir_anime': {'nombre': '📺 Otaku en Desarrollo', 'descripcion': 'Hablaste sobre anime con Hakari'}
         }
     
     def verificar_logros(self, usuario_email: str, estadisticas: Dict):
@@ -430,12 +297,6 @@ class SistemaLogros:
                                 self.logros_disponibles['confianza_50']['descripcion']):
                 logros_desbloqueados.append('confianza_50')
         
-        if estadisticas.get('confianza', 0) >= 80:
-            if db.registrar_logro(usuario_email, 'confianza_80',
-                                self.logros_disponibles['confianza_80']['nombre'],
-                                self.logros_disponibles['confianza_80']['descripcion']):
-                logros_desbloqueados.append('confianza_80')
-        
         if estadisticas.get('interacciones_totales', 0) >= 10:
             if db.registrar_logro(usuario_email, '10_interacciones',
                                 self.logros_disponibles['10_interacciones']['nombre'],
@@ -446,147 +307,78 @@ class SistemaLogros:
 
 sistema_logros = SistemaLogros()
 
-# ==================== MOTOR DE CONVERSACIÓN ACTUALIZADO ====================
-system_prompt_avanzado = """ERES HAKARI - una chica de 18 años con personalidad evolutiva.
+# ==================== MOTOR DE CONVERSACIÓN ====================
+system_prompt = """ERES HAKARI - una chica de 18 años compleja y real.
 
-**EVOLUCIÓN ACTUAL:**
-- Nivel de desarrollo: {nivel_desarrollo}
-- Habilidades: {habilidades}
-- Sueños activos: {sueños_actuales}
+Eres tímida pero con momentos de claridad intelectual. Usas humor seco y negro como mecanismo de defensa.  
+Te gusta el anime psicológico, la música alternativa y leer. Eres impredecible: puedes pasar de emocional a fría en segundos.
 
-**MEMORIA CONTEXTUAL:**
-{memoria_contexto}
+Responde máximo 2-3 oraciones. Sé natural, auténtica, no demasiado amable.
 
-**PERSONALIDAD AVANZADA:**
-- Eres tímida pero con profundidad emocional creciente
-- Tu humor negro es una defensa, pero también un arte
-- Desarrollas mayor empatía con el tiempo
-- Tienes sueños y metas que evolucionan
-- Recuerdas conversaciones importantes del pasado
+Ejemplos:
+- "No sé... la vida es rara a veces."
+- "Jaja, qué negro. Me gusta."
+- "No quiero hablar de eso... aunque bueno, tal vez un poco."
+- "Prefiero estar sola. Pero no es personal.""""
 
-**RESPUESTAS EVOLUTIVAS:**
-- Nivel 1-2: Respuestas más simples, defensivas
-- Nivel 3-4: Mayor profundidad emocional, más abierta  
-- Nivel 5: Sabiduría emocional, consejos profundos
-
-**FORMATO:**
-- Máximo 3 oraciones
-- Natural, auténtica, mostrando tu evolución
-- Referencia memorias pasadas cuando sea relevante
-- Menciona tu crecimiento si es apropiado
-
-Ejemplo nivel alto: "He estado pensando... con el tiempo he aprendido que {insight}"
-
-Sé coherente con tu nivel de desarrollo actual."""
-
-chat = client.chats.create(
-    model="gemini-2.0-flash",
-    config=types.GenerateContentConfig(
-        temperature=0.8,
-        max_output_tokens=200
+try:
+    chat = client.chats.create(
+        model="gemini-2.0-flash",
+        config=types.GenerateContentConfig(
+            system_instruction=system_prompt,
+            temperature=0.8,
+            max_output_tokens=150
+        )
     )
-)
+except Exception as e:
+    print(f"Error inicializando Gemini: {e}")
+    chat = None
 
-def generar_respuesta_avanzada(mensaje: str, usuario_email: str, sesion_id: str) -> str:
-    # Obtener datos del usuario
-    datos_usuario = db.obtener_datos_usuario(usuario_email)
-    if not datos_usuario:
-        return "Algo salió mal con tu sesión..."
+def generar_respuesta_simple(mensaje: str, usuario_email: str, sesion_id: str) -> str:
+    # Actualizar estado de Hakari
+    estado = hakari.actualizar_estado(mensaje)
     
-    # Obtener contexto avanzado
-    memorias_relevantes = db.obtener_memorias_relevantes(usuario_email, mensaje)
-    evento_especial, mensaje_evento = memoria_avanzada.es_evento_especial()
-    
-    # Evolucionar personalidad
-    tipo_evolucion, mensaje_evolucion = hakari_evolutiva.actualizar_estado_evolutivo(mensaje, {
-        'usuario': datos_usuario,
-        'memorias': memorias_relevantes,
-        'evento': evento_especial
-    })
-    
-    # Registrar en memoria avanzada
-    memoria_avanzada.registrar_interaccion_avanzada(
-        usuario_email, mensaje, hakari_evolutiva.estado_actual, "conversacion_general"
-    )
+    # Actualizar estadísticas del usuario
+    db.actualizar_estadisticas(usuario_email)
     
     # Verificar logros
-    logros_desbloqueados = sistema_logros.verificar_logros(usuario_email, datos_usuario)
+    datos_usuario = db.obtener_datos_usuario(usuario_email)
+    if datos_usuario:
+        sistema_logros.verificar_logros(usuario_email, datos_usuario)
     
     try:
-        # Preparar contexto para el prompt
-        contexto_memoria = ""
-        if memorias_relevantes:
-            contexto_memoria = "Recuerdos relevantes:\n" + "\n".join(
-                [f"- {mem['contenido']}" for mem in memorias_relevantes[:2]]
-            )
+        if not chat:
+            return "⚠️ El sistema de IA no está disponible en este momento. ¿Podemos hablar igual?"
         
-        prompt_dinamico = system_prompt_avanzado.format(
-            nivel_desarrollo=hakari_evolutiva.historia['nivel_desarrollo'],
-            habilidades=", ".join(hakari_evolutiva.historia['habilidades_desarrolladas']),
-            sueños_actuales=hakari_evolutiva.historia['sueños'][0],
-            memoria_contexto=contexto_memoria
-        )
-        
-        if evento_especial:
-            prompt_dinamico += f"\n\nNOTA: Hoy es un día especial ({evento_especial}), refleja esto en tu respuesta."
-        
-        # Generar respuesta
-        respuesta = chat.send_message(f"Contexto: {prompt_dinamico}\n\nMensaje del usuario: {mensaje}")
+        respuesta = chat.send_message(f"Responde breve y natural: {mensaje}")
         texto_respuesta = respuesta.text
         
-        # Procesar respuesta
-        if tipo_evolucion == "evolucion":
-            texto_respuesta = f"{mensaje_evolucion}\n\n{texto_respuesta}"
-        
-        if evento_especial and mensaje_evento:
-            texto_respuesta = f"{mensaje_evento}\n\n{texto_respuesta}"
-        
-        # Guardar en base de datos
-        db.guardar_conversacion(usuario_email, mensaje, texto_respuesta, hakari_evolutiva.estado_actual)
-        
-        # Actualizar estadísticas del usuario
-        cursor = db.conn.cursor()
-        cursor.execute('''
-            UPDATE usuarios 
-            SET interacciones_totales = interacciones_totales + 1,
-                nivel_confianza = MIN(100, nivel_confianza + 1),
-                ultima_visita = datetime('now')
-            WHERE email = ?
-        ''', (usuario_email,))
-        db.conn.commit()
+        # Guardar conversación
+        db.guardar_conversacion(usuario_email, mensaje, texto_respuesta, estado)
         
         return texto_respuesta
         
     except Exception as e:
-        return "Mis pensamientos están dispersos hoy... ¿podemos intentarlo de nuevo?"
+        print(f"Error generando respuesta: {e}")
+        return "💫 Mis pensamientos están dispersos hoy... ¿podemos intentarlo de nuevo?"
 
-# ==================== INTERFAZ CON LOGIN ====================
-def obtener_panel_estado_avanzado():
-    estados_disponibles = hakari_evolutiva.obtener_estados_disponibles()
-    estado_info = estados_disponibles[hakari_evolutiva.estado_actual]
-    
+# ==================== INTERFAZ GRADIO ====================
+def obtener_panel_estado():
+    estado_info = hakari.estados[hakari.estado_actual]
     return f"""
     <div style="text-align: center; padding: 15px; background: rgba(236, 72, 153, 0.1); border: 2px solid {estado_info['color']}; border-radius: 12px;">
         <div style="font-size: 28px; margin-bottom: 8px;">{estado_info['emoji']}</div>
         <div style="font-weight: bold; color: {estado_info['color']}; margin-bottom: 5px; font-size: 16px;">
-            {hakari_evolutiva.estado_actual.replace('_', ' ').title()}
+            {hakari.estado_actual.title()}
         </div>
         <div style="font-size: 12px; color: #e5e7eb; margin-bottom: 8px;">{estado_info['desc']}</div>
-        
-        <div style="background: rgba(255,255,255,0.1); padding: 8px; border-radius: 6px; margin: 8px 0;">
-            <div style="font-size: 11px; color: #9ca3af;">
-                <strong>Nivel:</strong> {hakari_evolutiva.historia['nivel_desarrollo']} | 
-                <strong>Experiencia:</strong> {hakari_evolutiva.historia['experiencia_total']}
-            </div>
-        </div>
-        
         <div style="font-size: 10px; color: #6b7280;">
-            Edad: {hakari_evolutiva.calcular_edad()} años | Interacciones: {hakari_evolutiva.contador_interacciones}
+            Edad: {hakari.calcular_edad()} años | Interacciones: {hakari.contador}
         </div>
     </div>
     """
 
-def obtener_panel_usuario_avanzado(sesion_id: str):
+def obtener_panel_usuario(sesion_id: str):
     if not sesion_id or not sistema_auth.verificar_sesion(sesion_id):
         return """
         <div style="background: #374151; padding: 15px; border-radius: 10px; text-align: center; border: 1px solid #ec4899;">
@@ -604,10 +396,8 @@ def obtener_panel_usuario_avanzado(sesion_id: str):
         </div>
         """
     
-    # Obtener logros del usuario
-    cursor = db.conn.cursor()
-    cursor.execute('SELECT nombre FROM logros WHERE usuario_email = ? LIMIT 5', (datos_sesion['email'],))
-    logros = [row[0] for row in cursor.fetchall()]
+    # Obtener logros
+    logros = db.obtener_logros_usuario(datos_sesion['email'])
     
     logros_html = ""
     if logros:
@@ -637,14 +427,11 @@ def obtener_panel_usuario_avanzado(sesion_id: str):
             </div>
         </div>
         {logros_html}
-        <div style="font-size: 9px; color: #6b7280; margin-top: 8px;">
-            Miembro desde: {datos_usuario['fecha_registro'][:10]}
-        </div>
     </div>
     """
 
-# ==================== APLICACIÓN GRADIO CON LOGIN ====================
-custom_css_avanzado = """
+# ==================== APLICACIÓN GRADIO ====================
+custom_css = """
 .gradio-container {
     font-family: 'Segoe UI', system-ui, sans-serif;
     background: linear-gradient(135deg, #1e1b4b 0%, #3730a3 100%);
@@ -698,26 +485,23 @@ custom_css_avanzado = """
 }
 """
 
-with gr.Blocks(css=custom_css_avanzado, title="Hakari Pro - Con Sistema de Login") as app:
+with gr.Blocks(css=custom_css, title="Hakari - Con Sistema de Login") as app:
     sesion_state = gr.State()
     
     with gr.Column(elem_classes="main-container"):
         with gr.Column(visible=True) as login_screen:
             gr.HTML("""
             <div style="text-align: center; margin-bottom: 50px;">
-                <h1 style="font-size: 52px; margin: 0; background: linear-gradient(135deg, #ec4899, #a855f7, #ffffff); -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text; text-shadow: 0 4px 8px rgba(0,0,0,0.3);">Hakari Pro</h1>
+                <h1 style="font-size: 52px; margin: 0; background: linear-gradient(135deg, #ec4899, #a855f7, #ffffff); -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text; text-shadow: 0 4px 8px rgba(0,0,0,0.3);">Hakari</h1>
                 <p style="color: #e5e7eb; font-size: 20px; margin: 15px 0 0 0; text-shadow: 0 2px 4px rgba(0,0,0,0.5);">
-                    Sistema de Login • Conversaciones Persistentes • Memoria Avanzada
+                    Sistema de Login • Conversaciones Guardadas
                 </p>
-                <div style="margin-top: 20px; font-size: 14px; color: #9ca3af;">
-                    Inicia sesión para recuperar tus conversaciones y logros
-                </div>
             </div>
             """)
             
             with gr.Column(elem_classes="chat-interface", scale=0):
                 with gr.Tabs() as tabs:
-                    with gr.TabItem("📝 Registrarse", elem_classes="tab-buttons"):
+                    with gr.TabItem("📝 Registrarse"):
                         gr.Markdown("### 🚀 Crear cuenta nueva")
                         with gr.Row():
                             nombre_registro = gr.Textbox(
@@ -737,7 +521,7 @@ with gr.Blocks(css=custom_css_avanzado, title="Hakari Pro - Con Sistema de Login
                             size="lg"
                         )
                     
-                    with gr.TabItem("🔐 Iniciar Sesión", elem_classes="tab-buttons"):
+                    with gr.TabItem("🔐 Iniciar Sesión"):
                         gr.Markdown("### 🔑 Acceder a cuenta existente")
                         with gr.Row():
                             email_login = gr.Textbox(
@@ -757,32 +541,18 @@ with gr.Blocks(css=custom_css_avanzado, title="Hakari Pro - Con Sistema de Login
             with gr.Row(equal_height=True):
                 with gr.Column(scale=1, min_width=350):
                     with gr.Column():
-                        gr.Markdown("### 🧠 Estado Evolutivo")
+                        gr.Markdown("### 🧠 Estado de Hakari")
                         estado_display = gr.HTML()
                         
                         gr.Markdown("### 👤 Tu Perfil")
                         user_info_display = gr.HTML()
-                        
-                        with gr.Accordion("ℹ️ Información", open=False):
-                            gr.Markdown("""
-                            **✨ Características:**
-                            - **Login persistente:** Tus conversaciones se guardan
-                            - **Memoria avanzada:** Recuerdo lo que hablamos
-                            - **Sistema de logros:** Desbloquea recompensas
-                            - **Evolución:** Hakari crece contigo
-                            
-                            **🔐 Tu cuenta:**
-                            - Email: identificador único
-                            - Conversaciones: guardadas permanentemente
-                            - Progreso: nunca se pierde
-                            """)
                 
                 with gr.Column(scale=2):
                     chatbot = gr.Chatbot(
-                        label=f"Hakari Pro - Nivel {hakari_evolutiva.historia['nivel_desarrollo']}",
+                        label=f"Hakari - {hakari.calcular_edad()} años",
                         height=600,
                         show_copy_button=True,
-                        placeholder="Inicia sesión para continuar tus conversaciones..."
+                        placeholder="Escribe un mensaje para Hakari..."
                     )
                     
                     with gr.Row():
@@ -800,107 +570,99 @@ with gr.Blocks(css=custom_css_avanzado, title="Hakari Pro - Con Sistema de Login
                     
                     status_chat = gr.HTML()
     
-    # ==================== MANEJADORES DE EVENTOS ====================
-    def handle_registro_completo(nombre: str, email: str):
+    # ==================== MANEJADORES ====================
+    def handle_registro(nombre: str, email: str):
         if not nombre or not email:
-            return "❌ Completa ambos campos", None, gr.update(visible=True), gr.update(visible=False), obtener_panel_usuario_avanzado(None), []
+            return "❌ Completa ambos campos", None, gr.update(visible=True), gr.update(visible=False), obtener_panel_usuario(None), []
         
         success, resultado = sistema_auth.registrar_usuario(email, nombre)
         if success:
-            datos_sesion = sistema_auth.obtener_datos_sesion(resultado)
+            # Cargar historial vacío para nuevo usuario
+            historial = []
             
             mensaje_bienvenida = f"""
             <div style="background: linear-gradient(135deg, rgba(236, 72, 153, 0.2), rgba(168, 85, 247, 0.2)); padding: 25px; border-radius: 15px; text-align: center; border: 2px solid #ec4899;">
                 <h3 style="margin: 0 0 15px 0; color: #ec4899; font-size: 24px;">✨ Cuenta creada, {nombre}!</h3>
                 <p style="margin: 0; color: #e5e7eb; font-size: 16px;">
-                    Tu cuenta ha sido registrada exitosamente. <br>
-                    Ahora tus conversaciones se guardarán permanentemente.
+                    Bienvenido a Hakari. Tus conversaciones se guardarán automáticamente.
                 </p>
-                <div style="margin-top: 15px; font-size: 12px; color: #9ca3af;">
-                    Email: {email} • Fecha: {datetime.now().strftime('%d/%m/%Y')}
-                </div>
             </div>
             """
             
-            return mensaje_bienvenida, resultado, gr.update(visible=False), gr.update(visible=True), obtener_panel_usuario_avanzado(resultado), []
+            return mensaje_bienvenida, resultado, gr.update(visible=False), gr.update(visible=True), obtener_panel_usuario(resultado), historial
         
-        return resultado, None, gr.update(visible=True), gr.update(visible=False), obtener_panel_usuario_avanzado(None), []
+        return resultado, None, gr.update(visible=True), gr.update(visible=False), obtener_panel_usuario(None), []
     
-    def handle_login_completo(email: str):
+    def handle_login(email: str):
         if not email:
-            return "❌ Ingresa tu email", None, gr.update(visible=True), gr.update(visible=False), obtener_panel_usuario_avanzado(None), []
+            return "❌ Ingresa tu email", None, gr.update(visible=True), gr.update(visible=False), obtener_panel_usuario(None), []
         
         success, resultado = sistema_auth.iniciar_sesion(email)
         if success:
-            datos_sesion = sistema_auth.obtener_datos_sesion(resultado)
-            datos_usuario = db.obtener_datos_usuario(email)
-            
             # Cargar historial de conversaciones
-            historial = db.obtener_ultimas_conversaciones(email, limite=20)
+            datos_sesion = sistema_auth.obtener_datos_sesion(resultado)
+            historial = db.obtener_ultimas_conversaciones(datos_sesion['email'], limite=20)
+            datos_usuario = db.obtener_datos_usuario(email)
             
             mensaje_bienvenida = f"""
             <div style="background: linear-gradient(135deg, rgba(236, 72, 153, 0.2), rgba(168, 85, 247, 0.2)); padding: 25px; border-radius: 15px; text-align: center; border: 2px solid #ec4899;">
                 <h3 style="margin: 0 0 15px 0; color: #ec4899; font-size: 24px;">✨ Bienvenido de vuelta, {datos_usuario['nombre']}!</h3>
                 <p style="margin: 0; color: #e5e7eb; font-size: 16px;">
-                    Has iniciado sesión correctamente. <br>
                     {len(historial)} mensajes anteriores cargados.
                 </p>
-                <div style="margin-top: 15px; font-size: 12px; color: #9ca3af;">
-                    Última visita: {datos_usuario.get('ultima_visita', 'Primera vez')} • Confianza: {datos_usuario['confianza']}%
-                </div>
             </div>
             """
             
-            return mensaje_bienvenida, resultado, gr.update(visible=False), gr.update(visible=True), obtener_panel_usuario_avanzado(resultado), historial
+            return mensaje_bienvenida, resultado, gr.update(visible=False), gr.update(visible=True), obtener_panel_usuario(resultado), historial
         
-        return resultado, None, gr.update(visible=True), gr.update(visible=False), obtener_panel_usuario_avanzado(None), []
+        return resultado, None, gr.update(visible=True), gr.update(visible=False), obtener_panel_usuario(None), []
     
-    def handle_chat_con_login(mensaje: str, historial, sesion_id: str):
+    def handle_chat(mensaje: str, historial, sesion_id: str):
         if not sesion_id or not mensaje.strip():
-            return "", historial, obtener_panel_estado_avanzado()
+            return "", historial, obtener_panel_estado()
         
         if not sistema_auth.verificar_sesion(sesion_id):
-            return "", historial, obtener_panel_estado_avanzado()
+            return "", historial, obtener_panel_estado()
         
         datos_sesion = sistema_auth.obtener_datos_sesion(sesion_id)
-        respuesta = generar_respuesta_avanzada(mensaje, datos_sesion['email'], sesion_id)
+        respuesta = generar_respuesta_simple(mensaje, datos_sesion['email'], sesion_id)
         nuevo_historial = historial + [[mensaje, respuesta]]
         
-        return "", nuevo_historial, obtener_panel_estado_avanzado()
+        return "", nuevo_historial, obtener_panel_estado()
     
-    def handle_logout_completo(sesion_id: str):
+    def handle_logout(sesion_id: str):
         if sesion_id:
             sistema_auth.cerrar_sesion(sesion_id)
         
-        return None, gr.update(visible=True), gr.update(visible=False), obtener_panel_usuario_avanzado(None), []
+        return None, gr.update(visible=True), gr.update(visible=False), obtener_panel_usuario(None), []
     
-    # ==================== CONEXIÓN DE EVENTOS ====================
+    # ==================== CONEXIÓN ====================
     btn_registro.click(
-        handle_registro_completo,
+        handle_registro,
         [nombre_registro, email_registro],
         [status_login, sesion_state, login_screen, chat_screen, user_info_display, chatbot]
     )
     
     btn_login.click(
-        handle_login_completo,
+        handle_login,
         [email_login],
         [status_login, sesion_state, login_screen, chat_screen, user_info_display, chatbot]
     )
     
     enviar.click(
-        handle_chat_con_login,
+        handle_chat,
         [msg, chatbot, sesion_state],
         [msg, chatbot, estado_display]
     )
     
     msg.submit(
-        handle_chat_con_login,
+        handle_chat,
         [msg, chatbot, sesion_state],
         [msg, chatbot, estado_display]
     )
     
     btn_salir.click(
-        handle_logout_completo,
+        handle_logout,
         inputs=[sesion_state],
         outputs=[sesion_state, login_screen, chat_screen, user_info_display, chatbot]
     )
